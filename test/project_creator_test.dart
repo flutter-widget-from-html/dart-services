@@ -172,15 +172,6 @@ void defineTests() {
         ]),
       ]).validate();
     });
-
-    test('plugins are registered', () async {
-      await d.dir('project_templates/null-safe', [
-        d.dir('flutter_project/lib', [
-          d.file('generated_plugin_registrant.dart',
-              matches('UrlLauncherPlugin.registerWith')),
-        ]),
-      ]).validate();
-    });
   });
 
   group('Firebase project template', () {
@@ -248,7 +239,6 @@ void defineTests() {
                 matches('FirebaseCoreWeb.registerWith'),
                 matches('FirebaseDatabaseWeb.registerWith'),
                 matches('FirebaseStorageWeb.registerWith'),
-                matches('UrlLauncherPlugin.registerWith'),
               ])),
         ]),
       ]).validate();
@@ -321,7 +311,6 @@ void defineTests() {
                 matches('FirebaseCoreWeb.registerWith'),
                 isNot(matches('FirebaseDatabaseWeb.registerWith')),
                 isNot(matches('FirebaseStorageWeb.registerWith')),
-                matches('UrlLauncherPlugin.registerWith'),
               ])),
         ]),
       ]).validate();
