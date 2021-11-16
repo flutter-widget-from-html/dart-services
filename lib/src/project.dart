@@ -97,6 +97,8 @@ const Set<String> supportedFlutterPackages = {
   'flutter_hooks',
   'flutter_lints',
   'flutter_riverpod',
+  'flutter_widget_from_html',
+  'flutter_widget_from_html_core',
   'hooks_riverpod',
   'url_launcher',
 };
