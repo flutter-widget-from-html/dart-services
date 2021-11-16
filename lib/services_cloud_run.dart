@@ -42,7 +42,7 @@ Future<void> main(List<String> args) async {
     exit(1);
   }
 
-  final redisServerUri = results['redis-url'] as String;
+  final redisServerUri = results['redis-url'] as String?;
   final nullSafety = results['null-safety'] as bool;
 
   Logger.root.level = Level.FINER;
@@ -70,7 +70,7 @@ Future<void> main(List<String> args) async {
 
 class EndpointsServer {
   static Future<EndpointsServer> serve(
-      int port, String redisServerUri, Sdk sdk, bool nullSafety) async {
+      int port, String? redisServerUri, Sdk sdk, bool nullSafety) async {
     final endpointsServer = EndpointsServer._(redisServerUri, sdk, nullSafety);
 
     await endpointsServer.init();
