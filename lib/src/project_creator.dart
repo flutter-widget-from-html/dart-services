@@ -13,9 +13,7 @@ import 'utils.dart';
 typedef LogFunction = void Function(String);
 
 class ProjectCreator {
-  final String _dartSdkPath;
-
-  final String _flutterToolPath;
+  final Sdk _sdk;
 
   final String _templatesPath;
 
@@ -27,14 +25,12 @@ class ProjectCreator {
   final LogFunction _log;
 
   ProjectCreator(
-    Sdk sdk,
+    this._sdk,
     this._templatesPath, {
     required String dartLanguageVersion,
     required File dependenciesFile,
     required LogFunction log,
-  })  : _dartSdkPath = sdk.dartSdkPath,
-        _flutterToolPath = sdk.flutterToolPath,
-        _dartLanguageVersion = dartLanguageVersion,
+  })  : _dartLanguageVersion = dartLanguageVersion,
         _dependenciesFile = dependenciesFile,
         _log = log;
 
@@ -44,7 +40,8 @@ class ProjectCreator {
     final projectPath = path.join(_templatesPath, 'dart_project');
     final projectDirectory = Directory(projectPath);
     await projectDirectory.create(recursive: true);
-    final dependencies = _dependencyVersions(supportedBasicDartPackages);
+    final dependencies = _dependencyVersions(supportedBasicDartPackages,
+        oldChannel: _sdk.oldChannel);
     File(path.join(projectPath, 'pubspec.yaml'))
         .writeAsStringSync(createPubspec(
       includeFlutterWeb: false,
@@ -52,12 +49,21 @@ class ProjectCreator {
       dependencies: dependencies,
     ));
     await _runDartPubGet(projectDirectory);
-    File(path.join(projectPath, 'analysis_options.yaml')).writeAsStringSync('''
+    var contents = '''
 include: package:lints/recommended.yaml
 linter:
   rules:
     avoid_print: false
-''');
+''';
+    if (_sdk.experiments.isNotEmpty) {
+      contents += '''
+analyzer:
+  enable-experiment:
+${_sdk.experiments.map((experiment) => '    - $experiment').join('\n')}
+''';
+    }
+    File(path.join(projectPath, 'analysis_options.yaml'))
+        .writeAsStringSync(contents);
   }
 
   /// Builds a Flutter project template directory, complete with `pubspec.yaml`,
@@ -66,10 +72,8 @@ linter:
   /// Depending on [firebaseStyle], Firebase packages are included in
   /// `pubspec.yaml` which affects how `flutter packages get` will register
   /// plugins.
-  Future<void> buildFlutterProjectTemplate({
-    required FirebaseStyle firebaseStyle,
-    required bool devMode,
-  }) async {
+  Future<void> buildFlutterProjectTemplate(
+      {required FirebaseStyle firebaseStyle}) async {
     final projectDirName = firebaseStyle == FirebaseStyle.none
         ? 'flutter_project'
         : 'firebase_project';
@@ -83,19 +87,32 @@ linter:
     await File(path.join(projectPath, 'web', 'index.html')).create();
     var packages = {
       ...supportedBasicDartPackages,
-      ...supportedFlutterPackages(devMode: devMode),
+      ...supportedFlutterPackages(devMode: _sdk.devMode),
       if (firebaseStyle != FirebaseStyle.none) ...coreFirebasePackages,
       if (firebaseStyle == FirebaseStyle.flutterFire)
         ...registerableFirebasePackages,
     };
-    final dependencies = _dependencyVersions(packages);
+    final dependencies =
+        _dependencyVersions(packages, oldChannel: _sdk.oldChannel);
     File(path.join(projectPath, 'pubspec.yaml'))
         .writeAsStringSync(createPubspec(
       includeFlutterWeb: true,
       dartLanguageVersion: _dartLanguageVersion,
       dependencies: dependencies,
     ));
-    await runFlutterPackagesGet(_flutterToolPath, projectPath, log: _log);
+    await runFlutterPackagesGet(_sdk.flutterToolPath, projectPath, log: _log);
+
+    // Working around Flutter 3.3's deprecation of generated_plugin_registrant.dart
+    // Context: https://github.com/flutter/flutter/pull/106921
+
+    final pluginRegistrant = File(path.join(
+        projectPath, '.dart_tool', 'dartpad', 'web_plugin_registrant.dart'));
+    if (pluginRegistrant.existsSync()) {
+      Directory(path.join(projectPath, 'lib')).createSync();
+      pluginRegistrant.copySync(
+          path.join(projectPath, 'lib', 'generated_plugin_registrant.dart'));
+    }
+
     if (firebaseStyle != FirebaseStyle.none) {
       // `flutter packages get` has been run with a _subset_ of all supported
       // Firebase packages, the ones that don't require a Firebase app to be
@@ -103,10 +120,11 @@ linter:
       // supported Firebase pacakges. This workaround is a very fragile hack.
       packages = {
         ...supportedBasicDartPackages,
-        ...supportedFlutterPackages(devMode: devMode),
+        ...supportedFlutterPackages(devMode: _sdk.devMode),
         ...firebasePackages,
       };
-      final dependencies = _dependencyVersions(packages);
+      final dependencies =
+          _dependencyVersions(packages, oldChannel: _sdk.oldChannel);
       File(path.join(projectPath, 'pubspec.yaml'))
           .writeAsStringSync(createPubspec(
         includeFlutterWeb: true,
@@ -115,18 +133,27 @@ linter:
       ));
       await _runDartPubGet(projectDir);
     }
-    File(path.join(projectPath, 'analysis_options.yaml')).writeAsStringSync('''
+    var contents = '''
 include: package:flutter_lints/flutter.yaml
 linter:
   rules:
     avoid_print: false
     use_key_in_widget_constructors: false
-''');
+''';
+    if (_sdk.experiments.isNotEmpty) {
+      contents += '''
+analyzer:
+  enable-experiment:
+${_sdk.experiments.map((experiment) => '    - $experiment').join('\n')}
+''';
+    }
+    File(path.join(projectPath, 'analysis_options.yaml'))
+        .writeAsStringSync(contents);
   }
 
   Future<void> _runDartPubGet(Directory dir) async {
     final process = await runWithLogging(
-      path.join(_dartSdkPath, 'bin', 'dart'),
+      path.join(_sdk.dartSdkPath, 'bin', 'dart'),
       arguments: ['pub', 'get'],
       workingDirectory: dir.path,
       environment: {'PUB_CACHE': _pubCachePath},
@@ -135,26 +162,27 @@ linter:
     await process.exitCode;
   }
 
-  Map<String, String> _dependencyVersions(
-    Iterable<String> packages,
-  ) {
+  Map<String, String> _dependencyVersions(Iterable<String> packages,
+      {required bool oldChannel}) {
     final allVersions =
         parsePubDependenciesFile(dependenciesFile: _dependenciesFile);
     return {
       for (var package in packages) package: allVersions[package] ?? 'any',
       // Overwrite with important constraints:
-      ...packageVersionConstraints,
+      ...packageVersionConstraints(oldChannel: oldChannel),
     };
   }
 }
 
 /// A mapping of version constraints for certain packages.
-const packageVersionConstraints = {
+Map<String, String> packageVersionConstraints({required bool oldChannel}) {
   // Ensure that pub version solving keeps these at sane minimum versions.
-  'cloud_firestore': '^3.1.0',
-  'firebase_auth': '^3.3.0',
-  'firebase_core': '^1.10.0',
-};
+  return {
+    'firebase_auth': '^4.2.0',
+    'firebase_auth_web': '^5.2.0',
+    'cloud_firestore_platform_interface': '^5.10.0',
+  };
+}
 
 /// Parses [dependenciesFile] as a JSON Map of Strings.
 Map<String, String> parsePubDependenciesFile({required File dependenciesFile}) {

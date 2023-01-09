@@ -31,7 +31,28 @@ class Sdk {
   final String version;
 
   /// Is this SDK being used in development mode. True if channel is `dev`.
-  final bool devMode;
+  bool get devMode => _channel == 'dev';
+
+  /// Is this the old channel
+  bool get oldChannel => _channel == 'old';
+
+  /// Is this the stable channel
+  bool get stableChannel => _channel == 'stable';
+
+  /// Is this the beta channel
+  bool get betaChannel => _channel == 'beta';
+
+  /// Is this the master channel
+  bool get masterChannel => _channel == 'master';
+
+  // Which channel is this SDK?
+  final String _channel;
+
+  // Experiments that this SDK is configured with
+  List<String> get experiments {
+    if (masterChannel) return ['records', 'patterns'];
+    return [];
+  }
 
   factory Sdk.create(String channel) {
     final sdkPath = path.join(Sdk._flutterSdksPath, channel);
@@ -55,10 +76,10 @@ class Sdk {
     required this.flutterVersion,
     required String channel,
   })  : _flutterBinPath = flutterBinPath,
+        _channel = channel,
         version = versionFull.contains('-')
             ? versionFull.substring(0, versionFull.indexOf('-'))
-            : versionFull,
-        devMode = channel == 'dev';
+            : versionFull;
 
   /// The path to the 'flutter' tool (binary).
   String get flutterToolPath => path.join(_flutterBinPath, 'flutter');
@@ -74,7 +95,7 @@ class Sdk {
       path.join(Directory.current.path, 'flutter-sdks');
 }
 
-const channels = ['stable', 'beta', 'dev', 'old'];
+const channels = ['stable', 'beta', 'dev', 'old', 'master'];
 
 class DownloadingSdkManager {
   final String channel;
@@ -122,9 +143,6 @@ class DownloadingSdkManager {
       // This takes perhaps ~20 seconds.
       await sdk.clone(
         [
-          '--depth',
-          '1',
-          '--no-single-branch',
           'https://github.com/flutter/flutter',
           sdk.flutterSdkPath,
         ],
@@ -174,9 +192,9 @@ class _DownloadedFlutterSdk {
 
   Future<int> init() =>
       // `flutter --version` takes ~28s.
-      _execLog('bin/flutter', ['--version'], flutterSdkPath);
+      _execLog(path.join('bin', 'flutter'), ['--version'], flutterSdkPath);
 
-  String get sdkPath => path.join(flutterSdkPath, 'bin/cache/dart-sdk');
+  String get sdkPath => path.join(flutterSdkPath, 'bin', 'cache', 'dart-sdk');
 
   String get versionFull =>
       File(path.join(sdkPath, 'version')).readAsStringSync().trim();

@@ -83,9 +83,31 @@ Set<String> supportedFlutterPackages({required bool devMode}) => {
       'flutter_riverpod',
       'flutter_widget_from_html',
       'flutter_widget_from_html_core',
+      'google_fonts',
       'hooks_riverpod',
-      'url_launcher',
-      if (devMode) 'english_words',
+      'provider',
+      'firebase_analytics',
+      'firebase_database',
+      'firebase_messaging',
+      'firebase_storage',
+      'flame',
+      'flame_fire_atlas',
+      'flame_forge2d',
+      'flame_splash_screen',
+      'flame_tiled',
+      'go_router',
+      'basics',
+      'flutter_processing',
+      'quiver',
+      'yaml',
+      'yaml_edit',
+      'tuple',
+      'animations',
+      'equatable',
+      'matcher',
+      'flutter_map',
+      'petitparser',
+      if (devMode) ...[],
     };
 
 /// The set of packages which indicate that Flutter Web is being used.
@@ -102,16 +124,15 @@ const Set<String> supportedBasicDartPackages = {
   'bloc',
   'characters',
   'collection',
-  'google_fonts',
+  'english_words',
   'http',
   'intl',
   'js',
   'lints',
   'meta',
   'path',
-  'pedantic',
-  'provider',
   'riverpod',
+  'rxdart',
   'vector_math',
 };
 
@@ -132,7 +153,6 @@ const Set<String> _allowedDartImports = {
   'dart:svg',
   'dart:web_audio',
   'dart:web_gl',
-  'dart:web_sql',
   'dart:ui',
 };
 
@@ -171,16 +191,33 @@ String? _packageNameFromPackageUri(String uriString) {
   return uri.pathSegments.first;
 }
 
+/// Goes through imports list and returns list of unsupported imports.
+/// Optional [sourcesFileList] contains a list of the source filenames
+/// which are all part of this overall sources file set (these are to
+/// be allowed).
+/// Note: The filenames in [sourcesFileList] were sanitized of any
+/// 'package:'/etc syntax as the file set arrives from the endpoint,
+/// and before being passed to [getUnsupportedImports].
+/// This is done so the list can't be used to bypass unsupported imports.
+/// The function [sanitizeAndCheckFilenames()] was used to sanitize the
+/// filenames.
 List<ImportDirective> getUnsupportedImports(List<ImportDirective> imports,
-    {required bool devMode}) {
+    {List<String>? sourcesFileList, required bool devMode}) {
   return imports.where((import) {
     final uriString = import.uri.stringValue;
-    if (uriString == null) {
+    if (uriString == null || uriString.isEmpty) {
       return false;
     }
     // All non-VM 'dart:' imports are ok.
     if (uriString.startsWith('dart:')) {
       return !_allowedDartImports.contains(uriString);
+    }
+    // Filenames from within this compilation files={} sources file set
+    // are OK. (These filenames have been sanitized to prevent 'package:'
+    // (and other) prefixes, so the a filename cannot be used to bypass
+    // import restrictions (see comment above)).
+    if (sourcesFileList != null && sourcesFileList.contains(uriString)) {
+      return false;
     }
 
     final uri = Uri.tryParse(uriString);
