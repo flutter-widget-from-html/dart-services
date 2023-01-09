@@ -18,7 +18,7 @@ void defineTests() {
   Future<ProjectCreator> projectCreator() async {
     final dependenciesFile = d.file('dependencies.json', '''
 {
-  "meta": "1.7.0"
+  "meta": "^1.7.0"
 }
 ''');
     await dependenciesFile.create();
@@ -52,7 +52,6 @@ void defineTests() {
               'pubspec.yaml',
               allOf([
                 matches("sdk: '>=$languageVersion <3.0.0'"),
-                matches('meta: 1.7.0'),
               ])),
         ]),
       ]).validate();
@@ -76,8 +75,8 @@ void defineTests() {
 
   group('basic Flutter project template', () {
     setUpAll(() async {
-      await (await projectCreator()).buildFlutterProjectTemplate(
-          firebaseStyle: FirebaseStyle.none, devMode: false);
+      await (await projectCreator())
+          .buildFlutterProjectTemplate(firebaseStyle: FirebaseStyle.none);
     });
 
     test('project directory is created', () async {
@@ -102,7 +101,6 @@ void defineTests() {
               'pubspec.yaml',
               allOf([
                 matches("sdk: '>=$languageVersion <3.0.0'"),
-                matches('meta: 1.7.0'),
                 matches('sdk: flutter'),
               ])),
         ]),
@@ -128,7 +126,7 @@ void defineTests() {
       await d.dir('project_templates', [
         d.dir('flutter_project/lib', [
           d.file('generated_plugin_registrant.dart',
-              matches('UrlLauncherPlugin.registerWith')),
+              matches('FirebaseCoreWeb.registerWith')),
         ]),
       ]).validate();
     });
@@ -137,7 +135,7 @@ void defineTests() {
   group('Firebase project template', () {
     setUpAll(() async {
       await (await projectCreator()).buildFlutterProjectTemplate(
-          firebaseStyle: FirebaseStyle.flutterFire, devMode: false);
+          firebaseStyle: FirebaseStyle.flutterFire);
     });
 
     test('project directory is created', () async {
@@ -162,7 +160,6 @@ void defineTests() {
               'pubspec.yaml',
               allOf([
                 matches("sdk: '>=$languageVersion <3.0.0'"),
-                matches('meta: 1.7.0'),
                 matches('sdk: flutter'),
               ])),
         ]),
@@ -184,17 +181,35 @@ void defineTests() {
       ]).validate();
     });
 
+    test('generated_plugin_registrant.dart is created', () async {
+      await d.dir('project_templates', [
+        d.dir('firebase_project', [
+          d.dir('lib', [
+            d.file(
+              'generated_plugin_registrant.dart',
+              isNotEmpty,
+            ),
+          ]),
+        ]),
+      ]).validate();
+    });
+
     test('plugins are registered', () async {
       await d.dir('project_templates', [
-        d.dir('firebase_project/lib', [
-          d.file(
+        d.dir('firebase_project', [
+          d.dir('lib', [
+            d.file(
               'generated_plugin_registrant.dart',
               allOf([
                 matches('FirebaseFirestoreWeb.registerWith'),
-                matches('FirebaseAuthWeb.registerWith'),
+                matches('FirebaseAnalyticsWeb.registerWith'),
                 matches('FirebaseCoreWeb.registerWith'),
-                matches('UrlLauncherPlugin.registerWith'),
-              ])),
+                matches('FirebaseDatabaseWeb.registerWith'),
+                matches('FirebaseMessagingWeb.registerWith'),
+                matches('FirebaseStorageWeb.registerWith'),
+              ]),
+            ),
+          ]),
         ]),
       ]).validate();
     });

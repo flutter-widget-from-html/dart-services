@@ -15,6 +15,7 @@ import 'package:dart_services/src/sdk.dart';
 import 'package:dart_services/src/utils.dart';
 import 'package:grinder/grinder.dart';
 import 'package:http/http.dart' as http;
+import 'package:package_config/package_config.dart';
 import 'package:path/path.dart' as path;
 
 Future<void> main(List<String> args) async {
@@ -43,7 +44,7 @@ void analyzeTest() {}
 @Depends(buildStorageArtifacts)
 Future<void> serve() async {
   await _run(Platform.executable, arguments: [
-    'bin/server_dev.dart',
+    path.join('bin', 'server_dev.dart'),
     '--channel',
     _channel,
     '--port',
@@ -55,7 +56,7 @@ Future<void> serve() async {
 @Depends(buildStorageArtifacts)
 Future<void> serveNullSafety() async {
   await _run(Platform.executable, arguments: [
-    'bin/server_dev.dart',
+    path.join('bin', 'server_dev.dart'),
     '--channel',
     _channel,
     '--port',
@@ -74,7 +75,7 @@ const _dockerFileNames = [
 ];
 
 /// Returns the Flutter channel provided in environment variables.
-late final String _channel = () {
+final String _channel = () {
   final channel = Platform.environment['FLUTTER_CHANNEL'];
   if (channel == null) {
     throw StateError('Must provide FLUTTER_CHANNEL');
@@ -90,8 +91,8 @@ Sdk _getSdk() => Sdk.create(_channel);
 @Task('Update the docker and SDK versions')
 void updateDockerVersion() {
   final platformVersion = Platform.version.split(' ').first;
-  for (final _dockerFileName in _dockerFileNames) {
-    final dockerFile = File(_dockerFileName);
+  for (final dockerFileName in _dockerFileNames) {
+    final dockerFile = File(dockerFileName);
     final dockerImageLines = dockerFile.readAsLinesSync().map((String s) {
       if (s.contains(_dockerVersionMatcher)) {
         return 'FROM $_dartImageName:$platformVersion';
@@ -146,8 +147,8 @@ Future<void> _validateExists(Uri url) async {
 void buildProjectTemplates() async {
   final templatesPath = path.join(Directory.current.path, 'project_templates');
   final templatesDirectory = Directory(templatesPath);
-  final exists = await templatesDirectory.exists();
-  if (exists) {
+  if (await templatesDirectory.exists()) {
+    log('Removing ${templatesDirectory.path}');
     await templatesDirectory.delete(recursive: true);
   }
 
@@ -161,17 +162,13 @@ void buildProjectTemplates() async {
   );
   await projectCreator.buildDartProjectTemplate();
   await projectCreator.buildFlutterProjectTemplate(
-    firebaseStyle: FirebaseStyle.none,
-    devMode: sdk.devMode,
-  );
+      firebaseStyle: FirebaseStyle.none);
   await projectCreator.buildFlutterProjectTemplate(
-    firebaseStyle: FirebaseStyle.flutterFire,
-    devMode: sdk.devMode,
-  );
+      firebaseStyle: FirebaseStyle.flutterFire);
 }
 
 @Task('build the sdk compilation artifacts for upload to google storage')
-@Depends(sdkInit, buildProjectTemplates)
+@Depends(sdkInit, updatePubDependencies)
 void buildStorageArtifacts() async {
   final sdk = _getSdk();
   delete(getDir('artifacts'));
@@ -203,31 +200,38 @@ Future<String> _buildStorageArtifacts(Directory dir, Sdk sdk,
   );
   joinFile(dir, ['pubspec.yaml']).writeAsStringSync(pubspec);
 
+  // Make sure the tooling knows this is a Flutter Web project
+  File(path.join(dir.path, 'web', 'index.html')).createSync(recursive: true);
+
   await runFlutterPackagesGet(sdk.flutterToolPath, dir.path, log: log);
+
+  // Working around Flutter 3.3's deprecation of generated_plugin_registrant.dart
+  // Context: https://github.com/flutter/flutter/pull/106921
+
+  final pluginRegistrant = File(path.join(
+      dir.path, '.dart_tool', 'dartpad', 'web_plugin_registrant.dart'));
+  if (pluginRegistrant.existsSync()) {
+    Directory(path.join(dir.path, 'lib')).createSync();
+    pluginRegistrant.copySync(
+        path.join(dir.path, 'lib', 'generated_plugin_registrant.dart'));
+  }
 
   // locate the artifacts
   final flutterPackages = ['flutter', 'flutter_test'];
 
   final flutterLibraries = <String>[];
-  final packageLines = joinFile(dir, ['.packages']).readAsLinesSync();
-  for (var line in packageLines) {
-    line = line.trim();
-    if (line.startsWith('#') || line.isEmpty) {
-      continue;
-    }
-    final index = line.indexOf(':');
-    if (index == -1) {
-      continue;
-    }
-    final packageName = line.substring(0, index);
-    final url = line.substring(index + 1);
-    if (flutterPackages.contains(packageName)) {
+  final config = await findPackageConfig(dir);
+  if (config == null) {
+    throw FileSystemException('package config not found', dir.toString());
+  }
+  for (final package in config.packages) {
+    if (flutterPackages.contains(package.name)) {
       // This is a package we're interested in - add all the public libraries to
       // the list.
-      final libPath = Uri.parse(url).toFilePath();
+      final libPath = package.packageUriRoot.toFilePath();
       for (final entity in getDir(libPath).listSync()) {
         if (entity is File && entity.path.endsWith('.dart')) {
-          flutterLibraries.add('package:$packageName/${fileName(entity)}');
+          flutterLibraries.add('package:${package.name}/${fileName(entity)}');
         }
       }
     }
@@ -244,17 +248,17 @@ Future<String> _buildStorageArtifacts(Directory dir, Sdk sdk,
   // Build the artifacts using DDC:
   // dart-sdk/bin/dartdevc -s kernel/flutter_ddc_sdk.dill
   //     --modules=amd package:flutter/animation.dart ...
-  final compilerPath = path.join(sdk.dartSdkPath, 'bin', 'dartdevc');
+  final compilerPath = path.join(sdk.dartSdkPath, 'bin', 'dart');
   final dillPath = path.join(
     sdk.flutterWebSdkPath,
     'flutter_ddc_sdk_sound.dill',
   );
 
   final args = <String>[
+    path.join(sdk.dartSdkPath, 'bin', 'snapshots', 'dartdevc.dart.snapshot'),
     '-s',
     dillPath,
     '--sound-null-safety',
-    '--enable-experiment=non-nullable',
     '--modules=amd',
     '--source-map',
     '-o',
@@ -386,7 +390,7 @@ Future<void> _run(
 }
 
 @Task('Update pubspec dependency versions')
-@Depends(sdkInit)
+@Depends(sdkInit, buildProjectTemplates)
 void updatePubDependencies() async {
   final sdk = _getSdk();
   await _updateDependenciesFile(
@@ -417,7 +421,7 @@ Future<void> _updateDependenciesFile({
         package: 'any',
       for (var package in supportedBasicDartPackages) package: 'any',
       // Overwrite with important constraints:
-      ...packageVersionConstraints,
+      ...packageVersionConstraints(oldChannel: sdk.oldChannel),
     },
   );
   joinFile(tempDir, ['pubspec.yaml']).writeAsStringSync(pubspec);
